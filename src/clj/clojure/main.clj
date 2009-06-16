@@ -25,7 +25,9 @@
              *print-meta* *print-meta*
              *print-length* *print-length*
              *print-level* *print-level*
-             *compile-path* (System/getProperty "clojure.compile.path" "classes")
+             *compile-path* (System/getProperty 
+			     "clojure.compile.path" 
+			     (if *android* "/data/clojure/classes" "classes"))
              *command-line-args* *command-line-args*
              *1 nil
              *2 nil

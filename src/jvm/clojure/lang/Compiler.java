@@ -17,6 +17,18 @@ package clojure.lang;
 import clojure.asm.*;
 import clojure.asm.commons.Method;
 import clojure.asm.commons.GeneratorAdapter;
+
+// Needed for Android compilation
+import dalvik.system.DexClassLoader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+import android.util.Log;
+
+
 //*/
 /*
 
@@ -186,8 +198,15 @@ static final public Var SOURCE_PATH = Var.intern(Namespace.findOrCreate(Symbol.c
 static final public Var COMPILE_PATH = Var.intern(Namespace.findOrCreate(Symbol.create("clojure.core")),
                                                   Symbol.create("*compile-path*"), null);
 //boolean
+
+//boolean True if running on Android
+static final public Var ANDROID = Var.intern(Namespace.findOrCreate(Symbol.create("clojure.core")),
+	Symbol.create("*android*"), 
+	System.getProperty("java.vm.vendor").equals("The Android Project")? Boolean.TRUE:Boolean.FALSE);
+
+//boolean True if running on Android
 static final public Var COMPILE_FILES = Var.intern(Namespace.findOrCreate(Symbol.create("clojure.core")),
-                                                   Symbol.create("*compile-files*"), Boolean.FALSE);
+                                                   Symbol.create("*compile-files*"), RT.booleanCast(ANDROID.deref()));
 
 //Integer
 static final public Var LINE = Var.create(0);
@@ -2912,6 +2931,12 @@ static public class FnExpr implements Expr{
 	private DynamicClassLoader loader;
 	private byte[] bytecode;
 
+	static final int MAX_DL_ARRAY_SIZE = 100;
+	static DexClassLoader[] dlArray = 
+		new DexClassLoader[MAX_DL_ARRAY_SIZE];
+	static int dlOffset = 0;
+	static Class[] clArray= new Class[MAX_DL_ARRAY_SIZE];
+
 	public FnExpr(Object tag){
 		this.tag = tag;
 	}
@@ -3193,11 +3218,55 @@ static public class FnExpr implements Expr{
 
 		bytecode = cw.toByteArray();
 		if(RT.booleanCast(COMPILE_FILES.deref()))
+			{
 			writeClassFile(internalName, bytecode);
+			if(RT.booleanCast(ANDROID.deref()))
+				handleAndroid();
+			}
 //		else
 //			getCompiledClass();
 	}
+	private void handleAndroid() throws Exception{
 
+		Log.d( "Clojure", "compiledex start");
+		String strings[] = {"--dex", 
+				    "--output=/data/clojure/classes.dex", 
+				    "/data/clojure/classes"};
+		com.android.dx.command.Main.main(strings);
+		Log.d( "Clojure", "compiledex end");
+		
+		//Zip up the file because the DexClassLoader requires it
+		try {
+			String dexSource = "/data/clojure/classes.dex";
+			String target = "/data/clojure/classes/" 
+				+ internalName.replace('.', '/') + ".zip";
+			Log.d( "Clojure", "zip target is " + target );
+			
+			ZipOutputStream zos = new 
+				ZipOutputStream(new FileOutputStream(target));
+			FileInputStream fis = new FileInputStream(dexSource);
+			
+			zos.putNextEntry(new ZipEntry("classes.dex"));
+			
+			int size = 0;
+			byte[] buffer = new byte[1000];
+			
+			while ((size = fis.read(buffer, 0, buffer.length))
+			   > 0) {
+				zos.write(buffer, 0, size);
+			}
+			
+			zos.closeEntry();
+			fis.close();
+			
+			zos.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		
+		Log.d( "Clojure", "Zipdex end");
+
+	}
 	void emitListAsObjectArray(Object value, GeneratorAdapter gen){
 		gen.push(((List) value).size());
 		gen.newArray(OBJECT_TYPE);
@@ -3409,8 +3478,10 @@ static public class FnExpr implements Expr{
 		if(compiledClass == null)
 			try
 				{
-				if(RT.booleanCast(COMPILE_FILES.deref()))
-					compiledClass = RT.classForName(name);//loader.defineClass(name, bytecode);
+				if(RT.booleanCast(ANDROID.deref()))
+					handleAndroidLoad();
+				else if(RT.booleanCast(COMPILE_FILES.deref()))
+				  compiledClass = RT.classForName(name);//loader.defineClass(name, bytecode);
 				else
 					{
 					loader = (DynamicClassLoader) LOADER.deref();
@@ -3422,6 +3493,27 @@ static public class FnExpr implements Expr{
 				throw new RuntimeException(e);
 				}
 		return compiledClass;
+	}
+
+	private void handleAndroidLoad() throws Exception{
+		String target = "/data/clojure/classes/" + 
+			internalName.replace('.', '/') + ".zip";
+		Log.d("Clojure", "load target is " + target);
+
+		//Store class and loader refs in arrays so the can't be 
+		// garbage collected
+		dlArray[dlOffset] = new DexClassLoader(target, 
+			"/data/clojure", null,this.getClass().getClassLoader());
+		clArray[dlOffset] = dlArray[dlOffset].loadClass(name);
+
+		if (clArray[dlOffset] == null)
+			Log.d("Clojure", "loaded class is null");
+		else
+			Log.d("Clojure", "loaded class is " + 
+			      clArray[dlOffset].toString());
+
+		compiledClass = clArray[dlOffset];
+		dlOffset++;
 	}
 
 	public Object eval() throws Exception{
@@ -4528,7 +4620,11 @@ public static Object eval(Object form) throws Exception{
 		        && ((Symbol) RT.first(form)).name.startsWith("def")))
 			{
 			FnExpr fexpr = (FnExpr) analyze(C.EXPRESSION, RT.list(FN, PersistentVector.EMPTY, form), "eval");
+			if(RT.booleanCast(ANDROID.deref()))
+			  Log.d("Clojure",  "starting to load");
 			IFn fn = (IFn) fexpr.eval();
+			if(RT.booleanCast(ANDROID.deref()))
+			  Log.d("Clojure", "starting invoke " + fn);
 			return fn.invoke();
 			}
 		else

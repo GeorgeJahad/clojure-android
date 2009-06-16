@@ -12,6 +12,7 @@
   <property name="jsrc" location="${src}/jvm"/>
   <property name="cljsrc" location="${src}/clj"/>
   <property name="build" location="classes"/>
+  <property name="sdk-location" location="${src}/../../sdk"/>
 
   <!-- version related properties -->
   <property file="${cljsrc}/clojure/version.properties"/>
@@ -63,6 +64,7 @@
     <tstamp/>
     <mkdir dir="${build}"/>
   	<antcall target="init-version"/>
+  	<antcall target="copy-dx-files"/>
   </target>
 
   <target name="init-version">
@@ -75,16 +77,20 @@
   	<chmod file="pom.xml" perm="ugo-w"/>
   </target>
 
+  <target name="copy-dx-files">
+    <unjar src="${sdk-location}/platforms/android-1.5/tools/lib/dx.jar" dest="${build}"/>
+  </target>
+
   <target name="compile-java" depends="init"
           description="Compile Java sources.">
-    <javac srcdir="${jsrc}" destdir="${build}" includeJavaRuntime="yes"
+    <javac srcdir="${jsrc}" destdir="${build}" includeJavaRuntime="yes" classpath="${sdk-location}/platforms/android-1.5/android.jar:${build}"
            debug="true" target="1.5"/>
   </target>
 
   <target name="compile-clojure" depends="compile-java"
           description="Compile Clojure sources.">
     <java classname="clojure.lang.Compile"
-          classpath="${build}:${cljsrc}">
+          classpath="${build}:${cljsrc}:${sdk-location}/platforms/android-1.5/android.jar">
       <sysproperty key="clojure.compile.path" value="${build}"/>
       <arg value="clojure.core"/>
       <arg value="clojure.main"/>
